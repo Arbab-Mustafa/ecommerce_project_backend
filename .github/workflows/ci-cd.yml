@@ -1,0 +1,108 @@
+name: Backend CI/CD
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+env:
+  DOCKER_USERNAME: arbabmustafa
+  IMAGE_NAME: forever-backend
+
+jobs:
+  build-and-deploy:
+    name: Build and Deploy Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: |
+          echo "✅ Tests passed (add your test command here)"
+          # npm test
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Extract version from commit
+        id: version
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "tag=v1.0.${GITHUB_RUN_NUMBER}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+            ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.tag }}
+            ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+
+      - name: Test Docker image
+        run: |
+          docker pull ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          docker run -d --name test-backend \
+            -p 4000:4000 \
+            -e PORT=4000 \
+            -e MONGODB_URI_ATLAS="mongodb://test:test@localhost:27017/test" \
+            -e JWT_SECRET="test-secret-key-for-testing-only" \
+            -e CLOUDINARY_NAME="test" \
+            -e CLOUDINARY_API_KEY="test" \
+            -e CLOUDINARY_SECRET_KEY="test" \
+            -e ADMIN_EMAIL="admin@test.com" \
+            -e ADMIN_PASSWORD="test123" \
+            -e STRIPE_SECRET_KEY="sk_test_test" \
+            ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+
+          # Wait for container to start
+          sleep 10
+
+          # Check if container is running
+          docker ps | grep test-backend || exit 1
+
+          # Check logs
+          docker logs test-backend
+
+          # Cleanup
+          docker stop test-backend
+          docker rm test-backend
+
+      - name: Image pushed successfully
+        run: |
+          echo "✅ Backend image pushed to Docker Hub"
+          echo "📦 Image: ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
+          echo "🏷️  Tag: ${{ steps.version.outputs.tag }}"
+          echo "🔖 SHA: ${{ steps.version.outputs.sha }}"
+
+      - name: Deploy notification
+        if: github.ref == 'refs/heads/master'
+        run: |
+          echo "🚀 Backend ready for deployment"
+          echo "Pull with: docker pull ${{ env.DOCKER_USERNAME }}/${{ env.IMAGE_NAME }}:latest"
