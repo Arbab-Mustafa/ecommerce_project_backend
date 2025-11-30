@@ -1,0 +1,23 @@
+# Development Dockerfile for hot reload
+FROM node:20-alpine
+
+# Install nodemon globally
+RUN npm install -g nodemon
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies (including dev)
+RUN npm install
+
+# Copy source code
+COPY . .
+
+# Expose port
+EXPOSE 4000
+
+# Start with nodemon
+CMD ["npm", "run", "server"]
+
